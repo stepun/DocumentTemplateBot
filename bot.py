@@ -9,9 +9,13 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any
+from dotenv import load_dotenv
 
 from auth import AuthManager
 from image_processor import DocumentProcessor
+
+# Загружаем переменные окружения
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 user_logger = logging.getLogger('user_activity')
@@ -28,8 +32,14 @@ class DocumentBot:
         self.auth_manager = AuthManager()
         self.document_processor = DocumentProcessor()
 
-        # ID администратора
-        self.admin_id = 120962578
+        # ID администратора из переменной окружения
+        admin_id_str = os.getenv("ADMIN_ID", "")
+        self.admin_id = int(admin_id_str) if admin_id_str.isdigit() else None
+
+        if self.admin_id:
+            logger.info(f"Admin ID configured: {self.admin_id}")
+        else:
+            logger.warning("No admin ID configured - admin commands will be disabled")
 
         # Регистрируем обработчики
         self._register_handlers()
@@ -104,7 +114,7 @@ class DocumentBot:
         """
 
         # Добавляем админские команды для администратора
-        if message.from_user.id == self.admin_id:
+        if self.admin_id and message.from_user.id == self.admin_id:
             help_text += """
 
 **Команды администратора:**
@@ -342,6 +352,10 @@ class DocumentBot:
 
     async def cmd_logs(self, message: types.Message):
         """Команда просмотра логов (только для администратора)"""
+        if not self.admin_id:
+            await message.answer("❌ Администратор не настроен в системе.")
+            return
+
         if message.from_user.id != self.admin_id:
             await message.answer("🚫 Доступ запрещен. Команда доступна только администратору.")
             return
@@ -372,6 +386,10 @@ class DocumentBot:
 
     async def cmd_stats(self, message: types.Message):
         """Команда просмотра статистики (только для администратора)"""
+        if not self.admin_id:
+            await message.answer("❌ Администратор не настроен в системе.")
+            return
+
         if message.from_user.id != self.admin_id:
             await message.answer("🚫 Доступ запрещен. Команда доступна только администратору.")
             return
