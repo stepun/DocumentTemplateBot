@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  document-bot:
+    build: .
+    container_name: document_filler_bot
+    restart: unless-stopped
+    volumes:
+      - ./templates:/app/templates
+      - ./filled_documents:/app/filled_documents
+      - ./config:/app/config
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - TIMEZONE=Europe/Moscow
+    env_file:
+      - .env
+    networks:
+      - default

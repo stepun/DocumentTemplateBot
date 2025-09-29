@@ -1,0 +1,38 @@
+# Environment files
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache
+venv/
+env/
+
+# Logs
+*.log
+bot.log
+
+# Generated documents
+filled_documents/*
+!filled_documents/.gitkeep
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
