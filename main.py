@@ -18,6 +18,13 @@ logging.basicConfig(
     ]
 )
 
+# Настройка отдельного логгера для пользователей
+user_logger = logging.getLogger('user_activity')
+user_handler = logging.FileHandler('user_activity.log')
+user_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+user_logger.addHandler(user_handler)
+user_logger.setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 async def main():

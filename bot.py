@@ -14,6 +14,7 @@ from auth import AuthManager
 from image_processor import DocumentProcessor
 
 logger = logging.getLogger(__name__)
+user_logger = logging.getLogger('user_activity')
 
 class DocumentFillStates(StatesGroup):
     waiting_for_template = State()
@@ -27,6 +28,9 @@ class DocumentBot:
         self.auth_manager = AuthManager()
         self.document_processor = DocumentProcessor()
 
+        # ID администратора
+        self.admin_id = 120962578
+
         # Регистрируем обработчики
         self._register_handlers()
 
@@ -39,6 +43,10 @@ class DocumentBot:
         self.dp.message.register(self.cmd_templates, Command("templates"))
         self.dp.message.register(self.cmd_fill, Command("fill"))
         self.dp.message.register(self.cmd_config, Command("config"))
+
+        # Админские команды
+        self.dp.message.register(self.cmd_logs, Command("logs"))
+        self.dp.message.register(self.cmd_stats, Command("stats"))
 
         # FSM handlers
         self.dp.message.register(self.process_template_selection, DocumentFillStates.waiting_for_template)
@@ -94,19 +102,38 @@ class DocumentBot:
 **Настройка шаблона:**
 Используйте `/config` для настройки координат полей нового шаблона.
         """
+
+        # Добавляем админские команды для администратора
+        if message.from_user.id == self.admin_id:
+            help_text += """
+
+**Команды администратора:**
+• `/logs` - просмотр логов активности пользователей
+• `/stats` - статистика использования бота
+            """
+
         await message.answer(help_text, parse_mode="Markdown")
 
     async def cmd_login(self, message: types.Message):
         """Команда /login"""
+        user_id = message.from_user.id
+        username = message.from_user.username or "Unknown"
+        first_name = message.from_user.first_name or "Unknown"
+
+        user_logger.info(f"LOGIN_ATTEMPT - User: {user_id} (@{username}, {first_name})")
+
         args = message.text.split(' ', 1)
         if len(args) < 2:
+            user_logger.info(f"LOGIN_FAILED - User: {user_id} - Reason: No password provided")
             await message.answer("❌ Укажите пароль: `/login <пароль>`", parse_mode="Markdown")
             return
 
         password = args[1]
-        if self.auth_manager.authenticate(message.from_user.id, password):
+        if self.auth_manager.authenticate(user_id, password):
+            user_logger.info(f"LOGIN_SUCCESS - User: {user_id} (@{username}, {first_name})")
             await message.answer("✅ Успешная авторизация! Теперь вы можете использовать бота.")
         else:
+            user_logger.info(f"LOGIN_FAILED - User: {user_id} (@{username}, {first_name}) - Reason: Wrong password")
             await message.answer("❌ Неверный пароль. Доступ запрещен.")
 
     async def cmd_logout(self, message: types.Message):
@@ -241,6 +268,10 @@ class DocumentBot:
 
         if success:
             try:
+                user_id = message.from_user.id
+                username = message.from_user.username or "Unknown"
+                user_logger.info(f"DOCUMENT_FILLED - User: {user_id} (@{username}) - Template: {selected_template} - Fields: {list(fill_data.keys())}")
+
                 # Отправляем заполненный документ
                 photo = FSInputFile(output_path)
                 await message.answer_photo(
@@ -251,8 +282,10 @@ class DocumentBot:
                 )
             except Exception as e:
                 logger.error(f"Ошибка отправки документа: {e}")
+                user_logger.error(f"DOCUMENT_SEND_ERROR - User: {message.from_user.id} - Error: {e}")
                 await message.answer("❌ Ошибка при отправке документа.")
         else:
+            user_logger.error(f"DOCUMENT_FILL_ERROR - User: {message.from_user.id} - Template: {selected_template}")
             await message.answer("❌ Ошибка при заполнении документа.")
 
         await state.clear()
@@ -306,6 +339,102 @@ class DocumentBot:
             await message.answer("❌ Ошибка обработки конфигурации.")
 
         await state.clear()
+
+    async def cmd_logs(self, message: types.Message):
+        """Команда просмотра логов (только для администратора)"""
+        if message.from_user.id != self.admin_id:
+            await message.answer("🚫 Доступ запрещен. Команда доступна только администратору.")
+            return
+
+        try:
+            # Читаем последние 20 строк из user_activity.log
+            if os.path.exists("user_activity.log"):
+                with open("user_activity.log", "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    recent_logs = lines[-20:] if len(lines) > 20 else lines
+
+                if recent_logs:
+                    log_text = "".join(recent_logs)
+                    # Разбиваем на части если слишком длинно
+                    if len(log_text) > 4000:
+                        parts = [log_text[i:i+4000] for i in range(0, len(log_text), 4000)]
+                        for i, part in enumerate(parts):
+                            await message.answer(f"📊 Логи активности (часть {i+1}/{len(parts)}):\n\n```\n{part}\n```", parse_mode="Markdown")
+                    else:
+                        await message.answer(f"📊 Последние записи логов активности:\n\n```\n{log_text}\n```", parse_mode="Markdown")
+                else:
+                    await message.answer("📊 Логи активности пусты.")
+            else:
+                await message.answer("📊 Файл логов не найден.")
+        except Exception as e:
+            logger.error(f"Ошибка чтения логов: {e}")
+            await message.answer("❌ Ошибка при чтении логов.")
+
+    async def cmd_stats(self, message: types.Message):
+        """Команда просмотра статистики (только для администратора)"""
+        if message.from_user.id != self.admin_id:
+            await message.answer("🚫 Доступ запрещен. Команда доступна только администратору.")
+            return
+
+        try:
+            # Анализируем логи для получения статистики
+            stats = {
+                'total_logins': 0,
+                'successful_logins': 0,
+                'failed_logins': 0,
+                'documents_filled': 0,
+                'unique_users': set()
+            }
+
+            if os.path.exists("user_activity.log"):
+                with open("user_activity.log", "r", encoding="utf-8") as f:
+                    for line in f:
+                        if "LOGIN_ATTEMPT" in line:
+                            stats['total_logins'] += 1
+                            # Извлекаем user_id из строки
+                            try:
+                                user_part = line.split("User: ")[1].split(" ")[0]
+                                stats['unique_users'].add(user_part)
+                            except:
+                                pass
+                        elif "LOGIN_SUCCESS" in line:
+                            stats['successful_logins'] += 1
+                        elif "LOGIN_FAILED" in line:
+                            stats['failed_logins'] += 1
+                        elif "DOCUMENT_FILLED" in line:
+                            stats['documents_filled'] += 1
+
+            # Подсчитываем шаблоны
+            templates = self.document_processor.get_available_templates()
+            template_count = len(templates) if templates else 0
+
+            # Подсчитываем заполненные документы
+            filled_count = 0
+            if os.path.exists("filled_documents"):
+                filled_count = len([f for f in os.listdir("filled_documents") if f.endswith(('.jpg', '.png', '.jpeg'))])
+
+            stats_text = f"""📈 **Статистика бота**
+
+👥 **Пользователи:**
+• Уникальных пользователей: {len(stats['unique_users'])}
+• Всего попыток входа: {stats['total_logins']}
+• Успешных входов: {stats['successful_logins']}
+• Неудачных входов: {stats['failed_logins']}
+
+📄 **Документы:**
+• Доступных шаблонов: {template_count}
+• Заполненных документов: {stats['documents_filled']}
+• Сохраненных файлов: {filled_count}
+
+🔐 **Система:**
+• Текущих авторизованных: {len(self.auth_manager.authenticated_users)}
+"""
+
+            await message.answer(stats_text, parse_mode="Markdown")
+
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики: {e}")
+            await message.answer("❌ Ошибка при получении статистики.")
 
     async def start_polling(self):
         """Запуск бота"""
